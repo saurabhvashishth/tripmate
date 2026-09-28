@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trip-data
+  namespace: tripmate
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: gp3
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trip-service
+  namespace: tripmate
+  labels: { app: trip-service }
+spec:
+  replicas: 1
+  # Recreate avoids two pods mounting the same RWO EBS volume during rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: trip-service }
+  template:
+    metadata:
+      labels: { app: trip-service }
+    spec:
+      containers:
+        - name: trip-service
+          image: ghcr.io/saurabhvashishth/tripmate-trip-service:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: DB_PATH
+              value: /data/trips.db
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 3000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+      volumes:
+        # Durable SQLite storage on an EBS gp3 volume (see 05-storageclass.yaml).
+        - name: data
+          persistentVolumeClaim:
+            claimName: trip-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trip-service
+  namespace: tripmate
+spec:
+  selector: { app: trip-service }
+  ports:
+    - port: 3000
+      targetPort: 3000

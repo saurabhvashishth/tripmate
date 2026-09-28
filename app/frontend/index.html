@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TripMate — plan, split, share</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>🧭 TripMate</h1>
+    <p class="tagline">Plan a trip, split expenses, share photos.</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Trips</h2>
+      <form id="trip-form" class="row">
+        <input id="trip-name" placeholder="Trip name" required />
+        <input id="trip-dest" placeholder="Destination" />
+        <button type="submit">Create trip</button>
+      </form>
+      <ul id="trip-list" class="list"></ul>
+    </section>
+
+    <section class="card" id="detail" hidden>
+      <h2 id="detail-title">Trip</h2>
+
+      <div class="subcard">
+        <h3>Members</h3>
+        <form id="member-form" class="row">
+          <input id="member-name" placeholder="Member name" required />
+          <input id="member-email" placeholder="Email (optional)" />
+          <button type="submit">Add member</button>
+        </form>
+        <ul id="member-list" class="list"></ul>
+      </div>
+
+      <div class="subcard">
+        <h3>Expenses</h3>
+        <form id="expense-form" class="row wrap">
+          <input id="exp-desc" placeholder="Description" required />
+          <input id="exp-amount" type="number" step="0.01" placeholder="Amount" required />
+          <select id="exp-payer"></select>
+          <button type="submit">Add expense</button>
+        </form>
+        <ul id="expense-list" class="list"></ul>
+        <button id="btn-summary" class="secondary">Compute split</button>
+        <div id="summary"></div>
+      </div>
+
+      <div class="subcard">
+        <h3>Photos</h3>
+        <form id="photo-form" class="row">
+          <input id="photo-file" type="file" accept="image/*" required />
+          <input id="photo-caption" placeholder="Caption" />
+          <button type="submit">Upload</button>
+        </form>
+        <div id="photo-grid" class="grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
