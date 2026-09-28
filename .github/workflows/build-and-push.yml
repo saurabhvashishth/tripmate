@@ -1,0 +1,63 @@
+name: Build and push TripMate images to GHCR
+
+# Builds each microservice image and pushes it to GitHub Container Registry.
+# Images are published as:
+#   ghcr.io/<owner>/tripmate-<service>:latest
+#   ghcr.io/<owner>/tripmate-<service>:<git-sha>
+#
+# The GITHUB_TOKEN provided to the workflow has packages:write, so no PAT is
+# needed for pushing. After the first successful run, set each package's
+# visibility to Public (see README) so EKS can pull without a secret.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/build-and-push.yml"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        service:
+          - trip-service
+          - expense-service
+          - photo-service
+          - frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase owner
+        id: owner
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v6
+        with:
+          context: app/${{ matrix.service }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.owner.outputs.owner }}/tripmate-${{ matrix.service }}:latest
+            ${{ env.REGISTRY }}/${{ steps.owner.outputs.owner }}/tripmate-${{ matrix.service }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
