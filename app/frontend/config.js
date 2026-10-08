@@ -5,8 +5,8 @@
 // AUTH_ENABLED=false keeps the app open (original no-login behaviour).
 // Set it to true and fill in the Keycloak URL to turn on the login gate.
 window.TRIPMATE_CONFIG = {
-  AUTH_ENABLED: false,
-  KEYCLOAK_URL: "http://REPLACE-WITH-KEYCLOAK-ALB-HOST",
+  AUTH_ENABLED: true,
+  KEYCLOAK_URL: "http://k8s-auth-keycloak-a22beb29b8-1869915574.ap-south-1.elb.amazonaws.com",
   KEYCLOAK_REALM: "tripmate",
   KEYCLOAK_CLIENT_ID: "tripmate-web",
 };
