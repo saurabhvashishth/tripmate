@@ -27,15 +27,23 @@ const colorFor = (name) => {
   return `hsl(${h} 55% 45%)`;
 };
 
+async function authHeaders(base) {
+  const h = Object.assign({}, base || {});
+  if (window.TripAuth && window.TripAuth.enabled) {
+    const tok = await window.TripAuth.token();
+    if (tok) h["Authorization"] = "Bearer " + tok;
+  }
+  return h;
+}
 async function jget(url) {
-  const r = await fetch(url);
+  const r = await fetch(url, { headers: await authHeaders() });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
 async function jsend(url, method, body) {
   const r = await fetch(url, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: await authHeaders({ "Content-Type": "application/json" }),
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!r.ok) throw new Error(await r.text());
@@ -533,7 +541,11 @@ $("#photo-form").onsubmit = async (e) => {
   const fd = new FormData();
   fd.append("photo", file);
   fd.append("caption", $("#photo-caption").value);
-  const r = await fetch(`${API.photos}/${currentTrip.id}`, { method: "POST", body: fd });
+  const r = await fetch(`${API.photos}/${currentTrip.id}`, {
+    method: "POST",
+    headers: await authHeaders(), // no Content-Type: let the browser set the multipart boundary
+    body: fd,
+  });
   if (!r.ok) return toast("Upload failed");
   e.target.reset();
   loadPhotos();
@@ -543,9 +555,34 @@ $("#photo-form").onsubmit = async (e) => {
 $("#btn-add-expense");
 
 // ============================================================================
+// Auth badge
+// ============================================================================
+function renderUserBadge() {
+  if (!window.TripAuth || !window.TripAuth.enabled) return;
+  const u = window.TripAuth.user();
+  if (!u) return;
+  $("#user-box").hidden = false;
+  $("#user-name").textContent = u.name;
+  const av = $("#user-avatar");
+  av.textContent = initials(u.name);
+  av.style.background = colorFor(u.name);
+  $("#btn-logout").onclick = () => window.TripAuth.logout();
+}
+
+// ============================================================================
 // Boot
 // ============================================================================
 (async function init() {
+  // Gate behind login when AUTH_ENABLED. Redirects to Keycloak if needed.
+  try {
+    await window.TripAuth.init();
+  } catch (e) {
+    console.error("Auth init failed:", e);
+    toast("Login service unavailable");
+    return;
+  }
+  renderUserBadge();
+
   await loadCategories();
   await loadTrips();
   const fromHash = location.hash.slice(1);

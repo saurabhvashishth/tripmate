@@ -5,6 +5,6 @@ RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Static assets
-COPY index.html style.css app.js /usr/share/nginx/html/
+COPY index.html style.css app.js config.js auth.js /usr/share/nginx/html/
 
 EXPOSE 80

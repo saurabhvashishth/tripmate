@@ -1,0 +1,48 @@
+{
+  "realm": "tripmate",
+  "enabled": true,
+  "displayName": "TripMate",
+  "loginTheme": "keycloak",
+  "sslRequired": "none",
+  "registrationAllowed": true,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "accessTokenLifespan": 1800,
+  "clients": [
+    {
+      "clientId": "tripmate-web",
+      "name": "TripMate Web (SPA)",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "redirectUris": ["*"],
+      "webOrigins": ["*"],
+      "fullScopeAllowed": true
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Demo",
+      "lastName": "User",
+      "email": "demo@tripmate.local",
+      "credentials": [
+        { "type": "password", "value": "demo123", "temporary": false }
+      ],
+      "realmRoles": ["user"]
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "user", "description": "Standard TripMate user" }
+    ]
+  }
+}

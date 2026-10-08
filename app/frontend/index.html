@@ -14,8 +14,14 @@
         <span class="brand-logo">🧭</span>
         <div>
           <div class="brand-name">TripMate</div>
-          <div class="brand-sub">split expenses, no account needed</div>
+          <div class="brand-sub">split expenses with friends</div>
         </div>
+      </div>
+
+      <div class="user-box" id="user-box" hidden>
+        <span class="avatar sm" id="user-avatar"></span>
+        <span class="user-name" id="user-name"></span>
+        <button class="ghost small-btn" id="btn-logout" title="Log out">Log out</button>
       </div>
 
       <div class="overall-card" id="overall-card">
@@ -200,6 +206,8 @@
 
   <div id="toast" class="toast" hidden></div>
 
+  <script src="/config.js"></script>
+  <script src="/auth.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -224,9 +224,85 @@ The photo-service needs `PHOTO_BUCKET` set and AWS credentials in the environmen
 | POST   | `/api/photos/:tripId` (multipart)     | upload photo                              |
 | GET    | `/api/photos/:tripId`                 | list photos (presigned URLs)              |
 
+## Optional: Keycloak login (showcase, branch `feature/keycloak-auth`)
+
+This branch adds OIDC login via **Keycloak**. It's a **demo-grade** setup: Keycloak runs in
+dev mode with an embedded H2 database, and the app is gated on the frontend only. Everything
+lives in `k8s-auth/` and a new `auth` namespace, so the core app is unchanged.
+
+> ⚠️ **Not production-ready as-is.** See the caveats at the end before relying on this.
+
+### 1. Deploy Keycloak
+
+```powershell
+# Realm is imported from a file via a ConfigMap (too large to hand-write as YAML).
+kubectl apply -f k8s-auth/00-namespace.yaml
+kubectl -n auth create configmap keycloak-realm --from-file=realm-tripmate.json=k8s-auth/realm-tripmate.json
+kubectl apply -f k8s-auth/10-keycloak.yaml
+
+kubectl -n auth rollout status deploy/keycloak
+kubectl -n auth get ingress keycloak   # wait for the ALB ADDRESS
+```
+
+The realm (`tripmate`), a public SPA client (`tripmate-web`), and a demo user are created
+automatically on first boot:
+
+- **Keycloak admin console:** `http://<keycloak-alb>/` — admin / `admin123`
+- **Demo app user:** `demo` / `demo123`
+
+### 2. Point the frontend at Keycloak and enable the gate
+
+Edit `app/frontend/config.js`:
+
+```js
+window.TRIPMATE_CONFIG = {
+  AUTH_ENABLED: true,
+  KEYCLOAK_URL: "http://<keycloak-alb>",   // from the ingress ADDRESS above
+  KEYCLOAK_REALM: "tripmate",
+  KEYCLOAK_CLIENT_ID: "tripmate-web",
+};
+```
+
+Rebuild/redeploy the frontend (push to the branch → Actions builds the image), then:
+
+```powershell
+kubectl -n tripmate rollout restart deploy frontend
+```
+
+Reload the app URL — you'll be redirected to Keycloak to log in, and the sidebar shows a
+user badge + **Log out** button once authenticated.
+
+> `config.js` is a **runtime** file, so you can also flip `AUTH_ENABLED` or change the
+> Keycloak URL by patching a ConfigMap-mounted copy without rebuilding the image. For the
+> simplest path in this demo, editing the file and rebuilding is fine.
+
+### How it works
+- `auth.js` loads `keycloak-js` from a CDN and runs the OIDC **Authorization Code + PKCE** flow.
+- When `AUTH_ENABLED` is `false` (default), the app behaves exactly as before — no login.
+- API calls attach `Authorization: Bearer <token>` when authenticated.
+
+### Production caveats (what to change later)
+- **Database:** swap H2 dev mode for `start` with a real DB (RDS Postgres or a PVC-backed
+  StatefulSet). H2 in dev mode resets on pod restart — all users/sessions are lost.
+- **Backend enforcement:** the gate is **frontend-only** right now. A determined user can
+  still call the APIs directly. Add JWT validation (verify the Keycloak-issued token and its
+  signature/audience) in trip/expense/photo services for real security.
+- **Lock down the client:** the realm uses `redirectUris: ["*"]` and `webOrigins: ["*"]` for
+  convenience. Restrict these to the exact frontend origin.
+- **TLS:** serve both the app and Keycloak over HTTPS (add ACM certs + an HTTPS listener, or
+  cert-manager). Tokens over plain HTTP are not safe.
+- **Secrets:** the admin credentials are inline in the manifest for the demo — move them to a
+  managed secret store.
+
 ## Teardown
 
 ```powershell
+# auth add-on (branch feature/keycloak-auth)
+kubectl delete -f k8s-auth/10-keycloak.yaml --ignore-not-found
+kubectl -n auth delete configmap keycloak-realm --ignore-not-found
+kubectl delete -f k8s-auth/00-namespace.yaml --ignore-not-found
+
+# core app
 kubectl delete -f k8s/ --ignore-not-found
 helm uninstall aws-load-balancer-controller -n kube-system
 cd terraform-infra; terraform destroy   # removes S3 bucket (force_destroy) + IAM
