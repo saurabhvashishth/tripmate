@@ -575,10 +575,20 @@ function renderUserBadge() {
 (async function init() {
   // Gate behind login when AUTH_ENABLED. Redirects to Keycloak if needed.
   try {
-    await window.TripAuth.init();
+    const ok = await window.TripAuth.init();
+    if (window.TripAuth.enabled && !ok) {
+      // Not authenticated and not redirected — don't render the app.
+      document.body.innerHTML =
+        '<div style="color:#e2e8f0;font-family:system-ui;padding:40px;text-align:center">' +
+        "Redirecting to sign in…</div>";
+      return;
+    }
   } catch (e) {
     console.error("Auth init failed:", e);
-    toast("Login service unavailable");
+    document.body.innerHTML =
+      '<div style="color:#e2e8f0;font-family:system-ui;padding:40px;text-align:center">' +
+      "<h2>Sign-in service unavailable</h2><p>Could not reach the login service. " +
+      "Please retry shortly.</p></div>";
     return;
   }
   renderUserBadge();

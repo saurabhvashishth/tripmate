@@ -21,9 +21,9 @@
     async init() {
       if (!this.enabled) return true;
 
-      await loadScript(
-        "https://cdn.jsdelivr.net/npm/keycloak-js@26.0.5/dist/keycloak.min.js"
-      );
+      // Vendored into the image (see Dockerfile) so there's no external CDN
+      // dependency at runtime — more reliable on locked-down networks.
+      await loadScript("/keycloak.min.js");
 
       kc = new Keycloak({
         url: cfg.KEYCLOAK_URL,
