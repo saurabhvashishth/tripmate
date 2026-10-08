@@ -9,11 +9,14 @@ const DB_PATH = process.env.DB_PATH || path.join("/data", "trips.db");
 // ---- DB setup ----------------------------------------------------------------
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
+db.pragma("foreign_keys = ON");
 db.exec(`
   CREATE TABLE IF NOT EXISTS trips (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     destination TEXT,
+    currency    TEXT NOT NULL DEFAULT 'INR',
+    emoji       TEXT NOT NULL DEFAULT '🧳',
     start_date  TEXT,
     end_date    TEXT,
     created_at  TEXT NOT NULL
@@ -27,6 +30,10 @@ db.exec(`
   );
 `);
 
+// Migrate older DBs
+try { db.exec("ALTER TABLE trips ADD COLUMN currency TEXT NOT NULL DEFAULT 'INR'"); } catch(_) {}
+try { db.exec("ALTER TABLE trips ADD COLUMN emoji TEXT NOT NULL DEFAULT '🧳'"); } catch(_) {}
+
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
 // ---- App ---------------------------------------------------------------------
@@ -38,13 +45,23 @@ app.get("/health", (_req, res) => res.json({ status: "ok", service: "trip-servic
 
 // Create trip
 app.post("/api/trips", (req, res) => {
-  const { name, destination, start_date, end_date } = req.body || {};
+  const { name, destination, start_date, end_date, currency, emoji, members } = req.body || {};
   if (!name) return res.status(400).json({ error: "name is required" });
   const id = uid();
   db.prepare(
-    `INSERT INTO trips (id, name, destination, start_date, end_date, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, name, destination || null, start_date || null, end_date || null, new Date().toISOString());
+    `INSERT INTO trips (id, name, destination, currency, emoji, start_date, end_date, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, name, destination || null, currency || "INR", emoji || "🧳",
+        start_date || null, end_date || null, new Date().toISOString());
+
+  // Optionally seed members in one shot
+  if (Array.isArray(members)) {
+    const stmt = db.prepare("INSERT INTO members (id, trip_id, name, email) VALUES (?, ?, ?, ?)");
+    for (const m of members) {
+      const mname = typeof m === "string" ? m : m && m.name;
+      if (mname) stmt.run(uid(), id, mname, (m && m.email) || null);
+    }
+  }
   res.status(201).json(getTrip(id));
 });
 
@@ -59,6 +76,19 @@ app.get("/api/trips/:id", (req, res) => {
   const trip = getTrip(req.params.id);
   if (!trip) return res.status(404).json({ error: "trip not found" });
   res.json(trip);
+});
+
+// Update trip
+app.patch("/api/trips/:id", (req, res) => {
+  const trip = db.prepare("SELECT id FROM trips WHERE id = ?").get(req.params.id);
+  if (!trip) return res.status(404).json({ error: "trip not found" });
+  const fields = ["name", "destination", "currency", "emoji", "start_date", "end_date"];
+  for (const f of fields) {
+    if (req.body[f] !== undefined) {
+      db.prepare(`UPDATE trips SET ${f} = ? WHERE id = ?`).run(req.body[f], req.params.id);
+    }
+  }
+  res.json(getTrip(req.params.id));
 });
 
 // Delete trip
@@ -76,10 +106,7 @@ app.post("/api/trips/:id/members", (req, res) => {
   if (!name) return res.status(400).json({ error: "name is required" });
   const id = uid();
   db.prepare("INSERT INTO members (id, trip_id, name, email) VALUES (?, ?, ?, ?)").run(
-    id,
-    req.params.id,
-    name,
-    email || null
+    id, req.params.id, name, email || null
   );
   res.status(201).json({ id, trip_id: req.params.id, name, email: email || null });
 });
@@ -89,9 +116,17 @@ app.get("/api/trips/:id/members", (req, res) => {
   res.json(membersOf(req.params.id));
 });
 
+// Remove member
+app.delete("/api/trips/:id/members/:memberId", (req, res) => {
+  const info = db.prepare("DELETE FROM members WHERE id = ? AND trip_id = ?")
+    .run(req.params.memberId, req.params.id);
+  if (info.changes === 0) return res.status(404).json({ error: "member not found" });
+  res.status(204).end();
+});
+
 // ---- helpers -----------------------------------------------------------------
 function membersOf(tripId) {
-  return db.prepare("SELECT * FROM members WHERE trip_id = ?").all(tripId);
+  return db.prepare("SELECT * FROM members WHERE trip_id = ? ORDER BY name").all(tripId);
 }
 function getTrip(id) {
   const trip = db.prepare("SELECT * FROM trips WHERE id = ?").get(id);

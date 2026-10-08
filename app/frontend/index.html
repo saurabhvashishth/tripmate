@@ -3,63 +3,202 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TripMate — plan, split, share</title>
+  <title>TripMate — split expenses with friends</title>
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <header>
-    <h1>🧭 TripMate</h1>
-    <p class="tagline">Plan a trip, split expenses, share photos.</p>
-  </header>
+  <div id="app">
+    <!-- ░░ Sidebar ░░ -->
+    <aside id="sidebar">
+      <div class="brand">
+        <span class="brand-logo">🧭</span>
+        <div>
+          <div class="brand-name">TripMate</div>
+          <div class="brand-sub">split expenses, no account needed</div>
+        </div>
+      </div>
 
-  <main>
-    <section class="card">
-      <h2>Trips</h2>
-      <form id="trip-form" class="row">
-        <input id="trip-name" placeholder="Trip name" required />
-        <input id="trip-dest" placeholder="Destination" />
-        <button type="submit">Create trip</button>
+      <div class="overall-card" id="overall-card">
+        <div class="overall-label">Overall, across all trips</div>
+        <div class="overall-rows" id="overall-rows">
+          <div class="muted small">Add expenses to see balances.</div>
+        </div>
+      </div>
+
+      <div class="sidebar-head">
+        <span>Your trips</span>
+        <button class="icon-btn" id="btn-new-trip" title="New trip">＋</button>
+      </div>
+      <ul id="trip-list" class="trip-list"></ul>
+
+      <div class="sidebar-foot muted small">
+        Data is stored on the server. Share a trip by sending its link.
+      </div>
+    </aside>
+
+    <!-- ░░ Main ░░ -->
+    <main id="main">
+      <!-- Empty state -->
+      <section id="empty-state" class="empty-state">
+        <div class="empty-emoji">🏖️</div>
+        <h2>Welcome to TripMate</h2>
+        <p class="muted">Create a trip, add the people in your group, and start logging expenses.
+          We'll keep a running balance and tell you the simplest way to settle up.</p>
+        <button class="primary" id="btn-new-trip-2">Create your first trip</button>
+      </section>
+
+      <!-- Trip detail -->
+      <section id="trip-detail" hidden>
+        <header class="trip-header">
+          <div class="trip-title">
+            <span class="trip-emoji" id="d-emoji">🧳</span>
+            <div>
+              <h2 id="d-name">Trip</h2>
+              <div class="muted small" id="d-sub"></div>
+            </div>
+          </div>
+          <div class="trip-actions">
+            <button class="ghost" id="btn-share" title="Copy link">🔗 Share</button>
+            <button class="ghost danger" id="btn-del-trip" title="Delete trip">🗑</button>
+          </div>
+        </header>
+
+        <!-- Members strip -->
+        <div class="members-strip" id="members-strip"></div>
+
+        <!-- Tabs -->
+        <nav class="tabs">
+          <button class="tab active" data-tab="expenses">Expenses</button>
+          <button class="tab" data-tab="balances">Balances</button>
+          <button class="tab" data-tab="photos">Photos</button>
+        </nav>
+
+        <!-- Expenses tab -->
+        <div class="tab-panel" data-panel="expenses">
+          <button class="primary add-expense" id="btn-add-expense">＋ Add an expense</button>
+          <div class="activity" id="activity-feed"></div>
+        </div>
+
+        <!-- Balances tab -->
+        <div class="tab-panel" data-panel="balances" hidden>
+          <div class="balance-summary" id="balance-summary"></div>
+          <h3 class="section-title">Suggested settle-up</h3>
+          <div class="settlements" id="settlements"></div>
+          <h3 class="section-title">Spending by category</h3>
+          <div class="categories" id="categories"></div>
+        </div>
+
+        <!-- Photos tab -->
+        <div class="tab-panel" data-panel="photos" hidden>
+          <form id="photo-form" class="photo-form">
+            <input id="photo-file" type="file" accept="image/*" required />
+            <input id="photo-caption" placeholder="Caption (optional)" />
+            <button type="submit" class="primary">Upload</button>
+          </form>
+          <div id="photo-grid" class="photo-grid"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- ░░ Modal: new/edit trip ░░ -->
+  <div class="modal-overlay" id="trip-modal" hidden>
+    <div class="modal">
+      <h3 id="trip-modal-title">New trip</h3>
+      <form id="trip-form">
+        <label>Trip name
+          <input id="trip-name" placeholder="e.g. Goa 2026" required />
+        </label>
+        <div class="field-row">
+          <label>Emoji
+            <input id="trip-emoji" value="🧳" maxlength="2" />
+          </label>
+          <label>Destination
+            <input id="trip-dest" placeholder="e.g. Goa" />
+          </label>
+          <label>Currency
+            <select id="trip-currency">
+              <option value="INR">₹ INR</option>
+              <option value="USD">$ USD</option>
+              <option value="EUR">€ EUR</option>
+              <option value="GBP">£ GBP</option>
+            </select>
+          </label>
+        </div>
+        <label>Members (comma separated)
+          <input id="trip-members" placeholder="You, Alex, Priya" />
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close>Cancel</button>
+          <button type="submit" class="primary">Save trip</button>
+        </div>
       </form>
-      <ul id="trip-list" class="list"></ul>
-    </section>
+    </div>
+  </div>
 
-    <section class="card" id="detail" hidden>
-      <h2 id="detail-title">Trip</h2>
-
-      <div class="subcard">
-        <h3>Members</h3>
-        <form id="member-form" class="row">
-          <input id="member-name" placeholder="Member name" required />
-          <input id="member-email" placeholder="Email (optional)" />
-          <button type="submit">Add member</button>
-        </form>
-        <ul id="member-list" class="list"></ul>
-      </div>
-
-      <div class="subcard">
-        <h3>Expenses</h3>
-        <form id="expense-form" class="row wrap">
-          <input id="exp-desc" placeholder="Description" required />
-          <input id="exp-amount" type="number" step="0.01" placeholder="Amount" required />
+  <!-- ░░ Modal: add expense ░░ -->
+  <div class="modal-overlay" id="expense-modal" hidden>
+    <div class="modal">
+      <h3>Add an expense</h3>
+      <form id="expense-form">
+        <label>Description
+          <input id="exp-desc" placeholder="e.g. Dinner at the beach" required />
+        </label>
+        <div class="field-row">
+          <label>Amount
+            <input id="exp-amount" type="number" step="0.01" min="0" placeholder="0.00" required />
+          </label>
+          <label>Category
+            <select id="exp-category"></select>
+          </label>
+        </div>
+        <label>Paid by
           <select id="exp-payer"></select>
-          <button type="submit">Add expense</button>
-        </form>
-        <ul id="expense-list" class="list"></ul>
-        <button id="btn-summary" class="secondary">Compute split</button>
-        <div id="summary"></div>
-      </div>
+        </label>
 
-      <div class="subcard">
-        <h3>Photos</h3>
-        <form id="photo-form" class="row">
-          <input id="photo-file" type="file" accept="image/*" required />
-          <input id="photo-caption" placeholder="Caption" />
-          <button type="submit">Upload</button>
-        </form>
-        <div id="photo-grid" class="grid"></div>
-      </div>
-    </section>
-  </main>
+        <label>Split
+          <select id="exp-split-type">
+            <option value="equal">Equally</option>
+            <option value="unequal">Unequal amounts</option>
+            <option value="percent">By percentage</option>
+          </select>
+        </label>
+
+        <div id="split-editor" class="split-editor"></div>
+
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close>Cancel</button>
+          <button type="submit" class="primary">Add expense</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ░░ Modal: settle up ░░ -->
+  <div class="modal-overlay" id="settle-modal" hidden>
+    <div class="modal">
+      <h3>Record a payment</h3>
+      <form id="settle-form">
+        <div class="field-row">
+          <label>From
+            <select id="settle-from"></select>
+          </label>
+          <label>To
+            <select id="settle-to"></select>
+          </label>
+        </div>
+        <label>Amount
+          <input id="settle-amount" type="number" step="0.01" min="0" required />
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost" data-close>Cancel</button>
+          <button type="submit" class="primary">Record payment</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
 
   <script src="/app.js"></script>
 </body>

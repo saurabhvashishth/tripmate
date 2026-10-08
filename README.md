@@ -1,8 +1,21 @@
 # TripMate 🧭
 
-A lightweight, microservices trip-planning app: create trips, split expenses, and share photos.
+A lightweight, Splitwise-style microservices app for groups and trips: track multiple trips,
+split expenses (equally, by unequal amounts, or by percentage), record settlement payments,
+see running per-member balances within a trip and across all trips, get a simplified
+"who-pays-whom" settle-up plan, and share trip photos. **No account or login required.**
 Runs on your existing EKS cluster. Container images are hosted on **GitHub Container Registry
 (GHCR, public)**, so no ECR is needed.
+
+### Features
+- Multiple persistent trips, each with its own members, currency, and emoji
+- Expense categories (food, transport, stay, …) with a chronological activity feed
+- Equal / unequal / percentage splits with live validation
+- Record real settlement payments; balances update accordingly
+- Smart debt simplification (minimises the number of transfers)
+- Overall cross-trip balances in the sidebar
+- Shareable trip links (`/#<tripId>`) — no sign-in
+- Photo gallery per trip (S3-backed)
 
 ## Architecture
 
@@ -14,9 +27,10 @@ Runs on your existing EKS cluster. Container images are hosted on **GitHub Conta
                                                                              │
         ┌────────────────────────────────────────────────────────────────────┘
         │
-        ├── /api/trips     ─▶ trip-service    (Node/Express + SQLite)
-        ├── /api/expenses  ─▶ expense-service (Node/Express + SQLite, split calc)
-        └── /api/photos    ─▶ photo-service   (Node/Express + S3 via IRSA)
+        ├── /api/trips                         ─▶ trip-service    (Node/Express + SQLite)
+        ├── /api/expenses /payments /balances  ─▶ expense-service (Node/Express + SQLite)
+        │   /activity                              split calc, settlements, cross-trip balances
+        └── /api/photos                        ─▶ photo-service   (Node/Express + S3 via IRSA)
 ```
 
 | Service          | Tech                       | Storage           |
@@ -187,16 +201,28 @@ The photo-service needs `PHOTO_BUCKET` set and AWS credentials in the environmen
 
 ## API quick reference
 
-| Method | Path                                  | Purpose                       |
-|--------|---------------------------------------|-------------------------------|
-| POST   | `/api/trips`                          | create trip                   |
-| GET    | `/api/trips`                          | list trips                    |
-| POST   | `/api/trips/:id/members`              | add member                    |
-| POST   | `/api/expenses`                       | add expense                   |
-| GET    | `/api/expenses/:tripId`               | list expenses                 |
-| GET    | `/api/expenses/:tripId/summary`       | balances + settlement plan    |
-| POST   | `/api/photos/:tripId` (multipart)     | upload photo                  |
-| GET    | `/api/photos/:tripId`                 | list photos (presigned URLs)  |
+| Method | Path                                  | Purpose                                   |
+|--------|---------------------------------------|-------------------------------------------|
+| POST   | `/api/trips`                          | create trip (optional `members[]` seed)   |
+| GET    | `/api/trips`                          | list trips (with members)                 |
+| GET    | `/api/trips/:id`                      | get one trip                              |
+| PATCH  | `/api/trips/:id`                      | update trip (name, emoji, currency, …)    |
+| DELETE | `/api/trips/:id`                      | delete trip                               |
+| POST   | `/api/trips/:id/members`              | add member                                |
+| DELETE | `/api/trips/:id/members/:memberId`    | remove member                             |
+| GET    | `/api/expenses/categories`            | list expense categories                   |
+| POST   | `/api/expenses`                       | add expense (equal / unequal / percent)   |
+| GET    | `/api/expenses/:tripId`               | list expenses for a trip                  |
+| PATCH  | `/api/expenses/item/:id`              | edit an expense                           |
+| DELETE | `/api/expenses/item/:id`              | delete an expense                         |
+| GET    | `/api/expenses/:tripId/summary`       | balances, settlements, spend-by-category  |
+| POST   | `/api/payments`                       | record a settlement payment               |
+| GET    | `/api/payments/:tripId`               | list settlement payments                  |
+| DELETE | `/api/payments/item/:id`              | remove a payment                          |
+| GET    | `/api/activity/:tripId`               | merged expense + payment feed             |
+| GET    | `/api/balances`                       | cross-trip running balances + settle plan |
+| POST   | `/api/photos/:tripId` (multipart)     | upload photo                              |
+| GET    | `/api/photos/:tripId`                 | list photos (presigned URLs)              |
 
 ## Teardown
 
