@@ -16,6 +16,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Ensure the hidden attribute always wins over any display rule below. */
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0;
@@ -216,6 +218,9 @@ input, select {
 input:focus, select:focus { outline: none; border-color: var(--accent); }
 
 /* ░░ Modals ░░ */
+/* The [hidden] attribute must win over the overlay's display:grid below,
+   otherwise modals show on page load. */
+.modal-overlay[hidden] { display: none !important; }
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(2, 6, 23, 0.72);
   display: grid; place-items: center; padding: 20px; z-index: 50;
