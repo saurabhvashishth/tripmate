@@ -151,6 +151,14 @@ app.delete("/api/payments/item/:id", (req, res) => {
   res.status(204).end();
 });
 
+// Purge all expenses + payments for a trip (called when a trip is deleted).
+// Keeps the expense-service data consistent with the trip-service.
+app.delete("/api/expenses/trip/:tripId", (req, res) => {
+  const e = db.prepare("DELETE FROM expenses WHERE trip_id = ?").run(req.params.tripId);
+  const p = db.prepare("DELETE FROM payments WHERE trip_id = ?").run(req.params.tripId);
+  res.json({ trip_id: req.params.tripId, expenses_deleted: e.changes, payments_deleted: p.changes });
+});
+
 // ---- Split summary + settlement suggestions for a trip ----------------------
 app.get("/api/expenses/:tripId/summary", (req, res) => {
   res.json(computeSummary(req.params.tripId));

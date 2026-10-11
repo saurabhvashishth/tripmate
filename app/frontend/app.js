@@ -355,7 +355,11 @@ $("#trip-form").onsubmit = async (e) => {
 $("#btn-del-trip").onclick = async () => {
   if (!currentTrip) return;
   if (!confirm(`Delete "${currentTrip.name}"? This removes its expenses too.`)) return;
-  await jsend(`${API.trips}/${currentTrip.id}`, "DELETE");
+  const tripId = currentTrip.id;
+  await jsend(`${API.trips}/${tripId}`, "DELETE");
+  // Cascade: purge this trip's expenses + payments from the expense-service
+  // so cross-trip balances don't show orphaned data.
+  try { await jsend(`${API.expenses}/trip/${tripId}`, "DELETE"); } catch (_) {}
   currentTrip = null;
   $("#trip-detail").hidden = true;
   $("#empty-state").hidden = false;
