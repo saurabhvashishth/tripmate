@@ -98,9 +98,22 @@ async function loadTrips() {
 
 async function loadOverall() {
   const rows = $("#overall-rows");
+  const label = $("#overall-label");
   try {
-    const data = await jget("/api/balances");
-    const entries = Object.entries(data.balances).filter(([, v]) => Math.abs(v) > 0.009);
+    // When a trip is selected, show THAT trip's balances. Otherwise show the
+    // combined "across all trips" view.
+    let balances;
+    if (currentTrip) {
+      label.textContent = `${currentTrip.name} — balances`;
+      const summary = await jget(`${API.expenses}/${currentTrip.id}/summary`);
+      balances = summary.balances;
+    } else {
+      label.textContent = "Overall, across all trips";
+      const data = await jget("/api/balances");
+      balances = data.balances;
+    }
+
+    const entries = Object.entries(balances).filter(([, v]) => Math.abs(v) > 0.009);
     if (!entries.length) {
       rows.innerHTML = `<div class="muted small">You're all settled up 🎉</div>`;
       return;
