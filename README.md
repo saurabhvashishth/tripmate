@@ -16,8 +16,9 @@ on **GitHub Container Registry (GHCR, public)**.
 - Record real settlement payments; balances update accordingly
 - Smart debt simplification (minimises the number of transfers)
 - Overall cross-trip balances in the sidebar
+- Add, **edit** (description/amount/category) and delete expenses
 - Shareable trip links (`/#<tripId>`) — no sign-in
-- Photo gallery per trip (MinIO-backed)
+- Photo gallery per trip (MinIO-backed) — upload, view and **delete**
 
 ## Architecture
 
@@ -103,21 +104,28 @@ automatically — no manual `mkdir` on the NFS server is needed.
 
 ## 2. Install the NGINX Ingress Controller
 
-If it is not already installed:
+This is a bare-metal cluster with no cloud LoadBalancer, so the controller is exposed via
+**NodePort** (HTTP on `30080`, HTTPS on `30443`). If it is not already installed:
 
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 helm repo update
-helm install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace
+helm install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace \
+  --set controller.service.type=NodePort \
+  --set controller.service.nodePorts.http=30080 \
+  --set controller.service.nodePorts.https=30443
 
 kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller
+kubectl -n ingress-nginx get svc ingress-nginx-controller
 ```
 
-Note the external IP of the `ingress-nginx-controller` Service — point your DNS (or
-`/etc/hosts`) for `tripmate.local` and `minio.tripmate.local` at it:
+The app is reached on **any node IP at port 30080** (e.g. `172.30.41.248:30080`). Because the
+ingress routes by hostname, point your DNS (or `/etc/hosts`) for both `tripmate.local` and
+`minio.tripmate.local` at a node IP:
 
-```bash
-kubectl -n ingress-nginx get svc ingress-nginx-controller
+```
+172.30.41.248   tripmate.local
+172.30.41.248   minio.tripmate.local
 ```
 
 ## 3. Build and push images to GHCR (public)
@@ -165,6 +173,27 @@ If you expose MinIO under a different hostname than `minio.tripmate.local`, also
 `S3_PUBLIC_ENDPOINT` env in `k8s/12-photo-service.yaml` and the `minio-s3` host in
 `k8s/20-ingress.yaml` to match.
 
+> **Why `S3_PUBLIC_ENDPOINT` includes `:30080`.** The photo-service signs photo view URLs
+> against this host, and the browser fetches them directly. Since the ingress is a NodePort on
+> `30080`, the value is `http://minio.tripmate.local:30080` — it must match how the browser
+> actually reaches MinIO, or the presigned-URL signature breaks. If you later move to a `:80`
+> LoadBalancer (e.g. MetalLB), change it back to `http://minio.tripmate.local`.
+
+> **Note on MinIO storage/credentials.** MinIO stores its root identity in its data volume on
+> first startup, so changing the Secret after it has initialised won't rotate the keys. If the
+> photo-service logs `InvalidAccessKeyId`, give MinIO a fresh volume: scale it to 0, delete the
+> `minio-data` PVC, and re-apply `k8s/06-minio.yaml`. The `alpine/minio` image runs as a
+> non-root user, so the deployment sets `securityContext.fsGroup: 1000` to get write access to
+> the NFS-backed volume.
+
+### Authentication (Keycloak) — off by default
+
+The frontend image can enforce Keycloak login, but the in-house deployment ships it **off**.
+`k8s/13-frontend.yaml` mounts a `frontend-config` ConfigMap that overrides the image's
+`config.js` with `AUTH_ENABLED: false`. To enable auth, deploy a Keycloak (see the
+`feature/keycloak-auth` branch), then set `AUTH_ENABLED: true` and a reachable `KEYCLOAK_URL`
+in that ConfigMap and restart the frontend.
+
 ## 5. Deploy the app
 
 All manifests are plain YAML — no placeholder substitution needed. Apply them in order:
@@ -191,9 +220,12 @@ The photo-service auto-creates the `tripmate-photos` bucket in MinIO on startup.
 kubectl -n tripmate get ingress
 ```
 
-Make sure `tripmate.local` and `minio.tripmate.local` resolve to the NGINX Ingress
-controller's external IP (via DNS or `/etc/hosts`), then open the app in a browser:
-`http://tripmate.local/`.
+With the `/etc/hosts` entries from step 2 in place (both `tripmate.local` and
+`minio.tripmate.local` → a node IP), open the app in a browser at:
+**`http://tripmate.local:30080/`**
+
+Both hostnames must resolve: `tripmate.local` serves the app, and `minio.tripmate.local`
+serves photo images via presigned URLs.
 
 ---
 
