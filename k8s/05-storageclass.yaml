@@ -1,13 +1,27 @@
-# gp3 StorageClass backed by the EBS CSI driver.
-# Set as non-default here; reference it explicitly from PVCs.
+# Dedicated StorageClass for TripMate.
+#
+# The cluster already provides a shared NFS CSI StorageClass `nfs-csi`
+# (driver nfs.csi.k8s.io, export 172.16.11.78:/data). We do NOT modify that
+# shared class. Instead we add our own class that uses the same driver/export
+# but groups this app's volumes under a readable subdirectory:
+#
+#     172.16.11.78:/data/tripmate/<namespace>-<pvc-name>-<pv-name>
+#
+# The CSI driver creates the subDir path automatically on first mount, so no
+# manual mkdir on the NFS server is required.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: gp3
-provisioner: ebs.csi.aws.com
+  name: tripmate-nfs
+provisioner: nfs.csi.k8s.io
 parameters:
-  type: gp3
-  encrypted: "true"
-volumeBindingMode: WaitForFirstConsumer
+  server: 172.16.11.78
+  share: /data
+  # Group everything for this app under /data/tripmate/, one dir per volume.
+  subDir: tripmate/${pvc.metadata.namespace}-${pvc.metadata.name}-${pv.metadata.name}
+mountOptions:
+  - hard
+  - nfsvers=4.1
 reclaimPolicy: Retain
+volumeBindingMode: Immediate
 allowVolumeExpansion: true

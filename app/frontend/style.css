@@ -177,6 +177,8 @@ button { font-family: inherit; }
 .feed-amt { font-weight: 700; white-space: nowrap; }
 .feed-del { cursor: pointer; opacity: 0.5; font-size: 0.95rem; }
 .feed-del:hover { opacity: 1; }
+.feed-edit { cursor: pointer; opacity: 0.5; font-size: 0.95rem; margin-right: 6px; }
+.feed-edit:hover { opacity: 1; }
 .empty-feed { padding: 40px; text-align: center; }
 
 /* ░░ Balances ░░ */

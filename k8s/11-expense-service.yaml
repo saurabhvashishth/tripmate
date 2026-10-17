@@ -4,8 +4,8 @@ metadata:
   name: expense-data
   namespace: tripmate
 spec:
-  accessModes: ["ReadWriteOnce"]
-  storageClassName: gp3
+  accessModes: ["ReadWriteMany"]
+  storageClassName: tripmate-nfs
   resources:
     requests:
       storage: 1Gi
@@ -18,7 +18,9 @@ metadata:
   labels: { app: expense-service }
 spec:
   replicas: 1
-  # Recreate avoids two pods mounting the same RWO EBS volume during rollout.
+  # SQLite is single-writer, so keep a single replica. Recreate avoids two
+  # pods briefly writing the same SQLite file on the shared NFS volume during
+  # a rollout.
   strategy:
     type: Recreate
   selector:
@@ -52,7 +54,7 @@ spec:
             requests: { cpu: 50m, memory: 64Mi }
             limits: { cpu: 250m, memory: 256Mi }
       volumes:
-        # Durable SQLite storage on an EBS gp3 volume (see 05-storageclass.yaml).
+        # Durable SQLite storage on an NFS volume (see 05-storageclass.yaml).
         - name: data
           persistentVolumeClaim:
             claimName: expense-data

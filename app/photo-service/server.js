@@ -7,20 +7,55 @@ const {
   GetObjectCommand,
   ListObjectsV2Command,
   DeleteObjectCommand,
+  HeadBucketCommand,
+  CreateBucketCommand,
 } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 const PORT = process.env.PORT || 3000;
-const REGION = process.env.AWS_REGION || "ap-south-1";
+const REGION = process.env.AWS_REGION || "us-east-1";
 const BUCKET = process.env.PHOTO_BUCKET; // required
 const URL_TTL = Number(process.env.PRESIGN_TTL || 3600);
+
+// S3-compatible endpoint. For in-house deployments this points at MinIO
+// (e.g. http://minio.tripmate.svc.cluster.local:9000). Left unset means the
+// SDK talks to real AWS S3.
+const S3_ENDPOINT = process.env.S3_ENDPOINT || "";
+// MinIO (and most self-hosted S3) require path-style addressing rather than
+// virtual-hosted-style (bucket.endpoint). Defaults on when an endpoint is set.
+const FORCE_PATH_STYLE =
+  (process.env.S3_FORCE_PATH_STYLE || (S3_ENDPOINT ? "true" : "false")) === "true";
 
 if (!BUCKET) {
   console.error("PHOTO_BUCKET env var is required");
   process.exit(1);
 }
 
-const s3 = new S3Client({ region: REGION });
+const s3 = new S3Client({
+  region: REGION,
+  // When talking to MinIO we pass an explicit endpoint + path-style. When
+  // these are empty/false the client behaves exactly as before against S3.
+  ...(S3_ENDPOINT ? { endpoint: S3_ENDPOINT } : {}),
+  forcePathStyle: FORCE_PATH_STYLE,
+  // Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in the
+  // environment (a Kubernetes Secret for MinIO), or the default AWS chain.
+});
+
+// Ensure the target bucket exists. On MinIO the bucket may not be pre-created;
+// this is a no-op when it already exists. Harmless against S3 too (the caller
+// just needs CreateBucket perms, otherwise it is ignored).
+async function ensureBucket() {
+  try {
+    await s3.send(new HeadBucketCommand({ Bucket: BUCKET }));
+  } catch {
+    try {
+      await s3.send(new CreateBucketCommand({ Bucket: BUCKET }));
+      console.log(`created bucket ${BUCKET}`);
+    } catch (err) {
+      console.warn(`could not ensure bucket ${BUCKET}: ${err.name || err}`);
+    }
+  }
+}
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
@@ -96,10 +131,32 @@ app.delete("/api/photos/item/*", async (req, res) => {
   }
 });
 
+// Presigned GET URLs are returned to the browser, so they must point at an
+// endpoint the browser can reach. Inside the cluster MinIO is addressed via a
+// service DNS name the browser cannot resolve, so presign against a separate
+// browser-facing client when S3_PUBLIC_ENDPOINT is provided (e.g. an Ingress
+// host like http://minio.tripmate.local). Falls back to the internal client.
+const presignClient = process.env.S3_PUBLIC_ENDPOINT
+  ? new S3Client({
+      region: REGION,
+      endpoint: process.env.S3_PUBLIC_ENDPOINT,
+      forcePathStyle: FORCE_PATH_STYLE,
+    })
+  : s3;
+
 function presign(key) {
-  return getSignedUrl(s3, new GetObjectCommand({ Bucket: BUCKET, Key: key }), {
-    expiresIn: URL_TTL,
-  });
+  return getSignedUrl(
+    presignClient,
+    new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+    { expiresIn: URL_TTL }
+  );
 }
 
-app.listen(PORT, () => console.log(`photo-service listening on ${PORT}, bucket=${BUCKET}`));
+ensureBucket().finally(() =>
+  app.listen(PORT, () =>
+    console.log(
+      `photo-service listening on ${PORT}, bucket=${BUCKET}` +
+        (S3_ENDPOINT ? `, endpoint=${S3_ENDPOINT}` : "")
+    )
+  )
+);

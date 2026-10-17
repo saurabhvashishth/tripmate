@@ -1,3 +1,23 @@
+# The frontend image (built from the keycloak-auth branch) bakes in a
+# config.js that enables Keycloak auth against an AWS ELB URL that no longer
+# exists. For the in-house deployment we override that file via a ConfigMap
+# mounted over /usr/share/nginx/html/config.js, turning auth OFF (the app's
+# original no-login behaviour). No image rebuild is required.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend-config
+  namespace: tripmate
+data:
+  config.js: |
+    // Overridden at deploy time for the in-house cluster: auth disabled.
+    window.TRIPMATE_CONFIG = {
+      AUTH_ENABLED: false,
+      KEYCLOAK_URL: "",
+      KEYCLOAK_REALM: "tripmate",
+      KEYCLOAK_CLIENT_ID: "tripmate-web",
+    };
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,8 +35,18 @@ spec:
       containers:
         - name: frontend
           image: ghcr.io/saurabhvashishth/tripmate-frontend:latest
+          # Always re-pull so a rollout picks up a freshly built :latest from
+          # CI instead of a node-cached layer. (Pinning to the git-sha tag CI
+          # also publishes is an alternative, but that couples the manifest to
+          # a commit sha; Always keeps it simple and guarantees freshness.)
+          imagePullPolicy: Always
           ports:
             - containerPort: 80
+          volumeMounts:
+            # Override only config.js; the rest of the site stays from the image.
+            - name: frontend-config
+              mountPath: /usr/share/nginx/html/config.js
+              subPath: config.js
           readinessProbe:
             httpGet: { path: /, port: 80 }
             initialDelaySeconds: 5
@@ -24,6 +54,10 @@ spec:
           resources:
             requests: { cpu: 50m, memory: 32Mi }
             limits: { cpu: 200m, memory: 128Mi }
+      volumes:
+        - name: frontend-config
+          configMap:
+            name: frontend-config
 ---
 apiVersion: v1
 kind: Service

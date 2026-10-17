@@ -4,8 +4,10 @@ A lightweight, Splitwise-style microservices app for groups and trips: track mul
 split expenses (equally, by unequal amounts, or by percentage), record settlement payments,
 see running per-member balances within a trip and across all trips, get a simplified
 "who-pays-whom" settle-up plan, and share trip photos. **No account or login required.**
-Runs on your existing EKS cluster. Container images are hosted on **GitHub Container Registry
-(GHCR, public)**, so no ECR is needed.
+Runs on any in-house / on-prem Kubernetes cluster — no cloud dependencies. Durable storage
+uses an **NFS** StorageClass, photos live in a self-hosted **MinIO** (S3-compatible) object
+store, and traffic is routed by the **NGINX Ingress Controller**. Container images are hosted
+on **GitHub Container Registry (GHCR, public)**.
 
 ### Features
 - Multiple persistent trips, each with its own members, currency, and emoji
@@ -15,36 +17,41 @@ Runs on your existing EKS cluster. Container images are hosted on **GitHub Conta
 - Smart debt simplification (minimises the number of transfers)
 - Overall cross-trip balances in the sidebar
 - Shareable trip links (`/#<tripId>`) — no sign-in
-- Photo gallery per trip (S3-backed)
+- Photo gallery per trip (MinIO-backed)
 
 ## Architecture
 
 ```
-                          ┌───────────────── AWS ALB (Ingress) ─────────────────┐
-                          │                                                      │
-  browser ──────────────▶│  frontend (nginx)  ── reverse-proxies /api/* ───┐    │
-                          └──────────────────────────────────────────────────┘  │
-                                                                             │
-        ┌────────────────────────────────────────────────────────────────────┘
-        │
+                       ┌──────────── NGINX Ingress Controller ───────────┐
+                       │  tripmate.local        minio.tripmate.local      │
+  browser ────────────▶│      │                       │                   │
+                       └──────┼───────────────────────┼───────────────────┘
+                              │                        │ (presigned photo GETs)
+                              ▼                        ▼
+                     frontend (nginx) ── /api/* ─┐   MinIO (S3-compatible)
+                              │                   │        ▲
+        ┌─────────────────────────────────────────┘        │ photo bytes
+        │                                                   │
         ├── /api/trips                         ─▶ trip-service    (Node/Express + SQLite)
         ├── /api/expenses /payments /balances  ─▶ expense-service (Node/Express + SQLite)
         │   /activity                              split calc, settlements, cross-trip balances
-        └── /api/photos                        ─▶ photo-service   (Node/Express + S3 via IRSA)
+        └── /api/photos                        ─▶ photo-service   (Node/Express + MinIO)
 ```
 
-| Service          | Tech                       | Storage           |
-|------------------|----------------------------|-------------------|
-| frontend         | static HTML/JS + nginx     | –                 |
-| trip-service     | Node 20 / Express          | SQLite (EBS PVC)  |
-| expense-service  | Node 20 / Express          | SQLite (EBS PVC)  |
-| photo-service    | Node 20 / Express, AWS SDK | S3 (IRSA)         |
+| Service          | Tech                       | Storage              |
+|------------------|----------------------------|----------------------|
+| frontend         | static HTML/JS + nginx     | –                    |
+| trip-service     | Node 20 / Express          | SQLite (NFS PVC)     |
+| expense-service  | Node 20 / Express          | SQLite (NFS PVC)     |
+| photo-service    | Node 20 / Express, AWS SDK | MinIO (S3-compatible)|
 
-> **Note on storage:** SQLite persists on `gp3` EBS volumes via PersistentVolumeClaims, so
-> trip/expense data survives pod restarts and rollouts. This requires the **EBS CSI driver**
-> (installed as an EKS addon by Terraform) and the `gp3` StorageClass in `k8s/05-storageclass.yaml`.
-> Each of these services is a single replica using a `ReadWriteOnce` volume with the `Recreate`
-> rollout strategy. Photos are durable — they live in S3.
+> **Note on storage:** SQLite persists on **NFS** volumes via PersistentVolumeClaims, so
+> trip/expense data survives pod restarts and rollouts. The PVCs use a dedicated
+> **`tripmate-nfs`** StorageClass (`k8s/05-storageclass.yaml`) that drives the cluster's NFS
+> CSI driver (`nfs.csi.k8s.io`, export `172.16.11.78:/data`) and groups this app's volumes
+> under `/data/tripmate/`. Each of these services is a single replica (SQLite is single-writer)
+> with the `Recreate` rollout strategy. Photos are durable — they live in **MinIO**, a
+> self-hosted S3-compatible object store (`k8s/06-minio.yaml`) that itself persists on an NFS PVC.
 
 ## Repository layout
 
@@ -54,58 +61,78 @@ app/
   expense-service/
   photo-service/
   frontend/
-k8s/                 # Kubernetes manifests (namespace, deployments, services, ingress)
-terraform-infra/     # Terraform: existing VPC/EKS + tripmate.tf (S3, IRSA, ALB IAM)
+k8s/                 # Kubernetes manifests (namespace, storage, MinIO, deployments, ingress)
 ```
+
+> The `terraform-infra/` directory is only needed for the AWS/EKS deployment (see the
+> `main` branch). It is not used by this in-house deployment.
 
 ## Prerequisites
 
-- `aws` CLI configured for account/profile used in `terraform-infra/variables.tf`
+> All commands below are written for the **Linux** control node (bash). Run them from a shell
+> on the cluster's master/control node (or any machine with `kubectl` access to it).
+
+- An in-house Kubernetes cluster you can reach with `kubectl`
 - `kubectl`, `helm`, `docker`
-- A GitHub Personal Access Token (PAT) with `write:packages` scope
+- The **NFS CSI driver** (`nfs.csi.k8s.io`) installed in the cluster (see step 1). The app's
+  own `tripmate-nfs` StorageClass (`k8s/05-storageclass.yaml`) drives it against
+  `172.16.11.78:/data`.
+- The **NGINX Ingress Controller** installed in the cluster
+- A GitHub Personal Access Token (PAT) with `write:packages` scope (only to push images)
 
 ---
 
-## 1. Provision app infrastructure (Terraform)
+## 1. Install the NFS CSI driver
 
-This adds an S3 bucket, the IAM OIDC provider (IRSA), the photo-service role, the
-AWS Load Balancer Controller IAM policy/role, and the **EBS CSI driver** (EKS addon +
-its IRSA role) for durable SQLite storage. It reuses your existing EKS cluster.
+Durable storage is backed by the NFS export `172.16.11.78:/data` via the Kubernetes NFS CSI
+driver. Install it once (cluster-wide):
 
-```powershell
-cd terraform-infra
-terraform init
-terraform apply
+```bash
+helm repo add csi-driver-nfs https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/master/charts
+helm repo update
+helm install csi-driver-nfs csi-driver-nfs/csi-driver-nfs -n kube-system --version v4.9.0
+
+kubectl -n kube-system rollout status daemonset/csi-nfs-node
+kubectl get csidrivers | grep nfs.csi.k8s.io
 ```
 
-Capture the outputs — you'll need them below:
+The app ships its own StorageClass, `tripmate-nfs` (applied in step 5 as
+`k8s/05-storageclass.yaml`), which uses this driver and groups all app volumes under
+`/data/tripmate/` on the NFS export. The CSI driver creates those subdirectories
+automatically — no manual `mkdir` on the NFS server is needed.
 
-```powershell
-terraform output photo_bucket
-terraform output photo_irsa_role_arn
-terraform output alb_controller_role_arn
+## 2. Install the NGINX Ingress Controller
+
+If it is not already installed:
+
+```bash
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm install ingress-nginx ingress-nginx/ingress-nginx -n ingress-nginx --create-namespace
+
+kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller
 ```
 
-## 2. Point kubectl at the cluster
+Note the external IP of the `ingress-nginx-controller` Service — point your DNS (or
+`/etc/hosts`) for `tripmate.local` and `minio.tripmate.local` at it:
 
-```powershell
-aws eks update-kubeconfig --name main-eks-cluster --region ap-south-1 --profile <your-profile>
-kubectl get nodes
+```bash
+kubectl -n ingress-nginx get svc ingress-nginx-controller
 ```
 
 ## 3. Build and push images to GHCR (public)
 
 Log in to GHCR with your PAT (username = `saurabhvashishth`):
 
-```powershell
-$env:CR_PAT = "<your-github-PAT>"
-$env:CR_PAT | docker login ghcr.io -u saurabhvashishth --password-stdin
+```bash
+export CR_PAT="<your-github-PAT>"
+echo "$CR_PAT" | docker login ghcr.io -u saurabhvashishth --password-stdin
 ```
 
 Build and push each image:
 
-```powershell
-$OWNER = "saurabhvashishth"
+```bash
+OWNER="saurabhvashishth"
 
 docker build -t ghcr.io/$OWNER/tripmate-trip-service:latest    app/trip-service
 docker build -t ghcr.io/$OWNER/tripmate-expense-service:latest app/expense-service
@@ -123,69 +150,50 @@ After the first push, open each package in GitHub → **Package settings** → *
 
 > **If you'd rather keep them private:** create a pull secret and add
 > `imagePullSecrets` to each Deployment:
-> ```powershell
-> kubectl -n tripmate create secret docker-registry ghcr-pull `
->   --docker-server=ghcr.io --docker-username=saurabhvashishth --docker-password=$env:CR_PAT
+> ```bash
+> kubectl -n tripmate create secret docker-registry ghcr-pull \
+>   --docker-server=ghcr.io --docker-username=saurabhvashishth --docker-password="$CR_PAT"
 > ```
 
-## 4. Install the AWS Load Balancer Controller
+## 4. Set the MinIO credentials
 
-The Ingress needs this controller to provision the ALB. Install it via Helm, using the
-IRSA role ARN from Terraform.
+Photos are stored in MinIO. Edit `k8s/06-minio.yaml` and change the `minio-credentials`
+Secret (`MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD`) from the defaults. The photo-service reads
+the same Secret for its S3 access keys, so you only set them in one place.
 
-```powershell
-helm repo add eks https://aws.github.io/eks-charts
-helm repo update
-
-$VPC_ID = "vpc-0134e102a4dc91bff"
-$ROLE_ARN = terraform -chdir=terraform-infra output -raw alb_controller_role_arn
-
-helm install aws-load-balancer-controller eks/aws-load-balancer-controller `
-  -n kube-system `
-  --set clusterName=main-eks-cluster `
-  --set region=ap-south-1 `
-  --set vpcId=$VPC_ID `
-  --set serviceAccount.create=true `
-  --set serviceAccount.name=aws-load-balancer-controller `
-  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=$ROLE_ARN"
-
-kubectl -n kube-system rollout status deploy/aws-load-balancer-controller
-```
-
-> The public subnets used by the ALB must be tagged `kubernetes.io/role/elb = 1` and
-> `kubernetes.io/cluster/main-eks-cluster = shared|owned` for the controller to discover them.
+If you expose MinIO under a different hostname than `minio.tripmate.local`, also update the
+`S3_PUBLIC_ENDPOINT` env in `k8s/12-photo-service.yaml` and the `minio-s3` host in
+`k8s/20-ingress.yaml` to match.
 
 ## 5. Deploy the app
 
-The namespace/deployments are plain YAML. The photo-service manifest has two placeholders
-(`${PHOTO_SA_ROLE_ARN}`, `${PHOTO_BUCKET}`) filled from Terraform outputs.
+All manifests are plain YAML — no placeholder substitution needed. Apply them in order:
 
-```powershell
+```bash
 kubectl apply -f k8s/00-namespace.yaml
 kubectl apply -f k8s/05-storageclass.yaml
+kubectl apply -f k8s/06-minio.yaml
 kubectl apply -f k8s/10-trip-service.yaml
 kubectl apply -f k8s/11-expense-service.yaml
+kubectl apply -f k8s/12-photo-service.yaml
 kubectl apply -f k8s/13-frontend.yaml
 kubectl apply -f k8s/20-ingress.yaml
 
-# photo-service: substitute placeholders, then apply
-$env:PHOTO_SA_ROLE_ARN = terraform -chdir=terraform-infra output -raw photo_irsa_role_arn
-$env:PHOTO_BUCKET       = terraform -chdir=terraform-infra output -raw photo_bucket
-
-(Get-Content k8s/12-photo-service.yaml) `
-  -replace '\$\{PHOTO_SA_ROLE_ARN\}', $env:PHOTO_SA_ROLE_ARN `
-  -replace '\$\{PHOTO_BUCKET\}', $env:PHOTO_BUCKET |
-  kubectl apply -f -
+kubectl -n tripmate rollout status deploy/minio
+kubectl -n tripmate get pods
 ```
+
+The photo-service auto-creates the `tripmate-photos` bucket in MinIO on startup.
 
 ## 6. Get the app URL
 
-```powershell
-kubectl -n tripmate get ingress tripmate
+```bash
+kubectl -n tripmate get ingress
 ```
 
-Wait for the `ADDRESS` column to show the ALB DNS name (takes a minute or two), then open it
-in a browser: `http://<alb-dns-name>/`.
+Make sure `tripmate.local` and `minio.tripmate.local` resolve to the NGINX Ingress
+controller's external IP (via DNS or `/etc/hosts`), then open the app in a browser:
+`http://tripmate.local/`.
 
 ---
 
@@ -193,11 +201,25 @@ in a browser: `http://<alb-dns-name>/`.
 
 Each service runs standalone with Node 20:
 
-```powershell
-cd app/trip-service; npm install; $env:DB_PATH="./trips.db"; npm start   # :3000
+```bash
+cd app/trip-service && npm install && DB_PATH="./trips.db" npm start   # :3000
 ```
 
-The photo-service needs `PHOTO_BUCKET` set and AWS credentials in the environment.
+The photo-service needs `PHOTO_BUCKET` set plus S3 connection details. For local MinIO:
+
+```bash
+docker run -p 9000:9000 -p 9001:9001 \
+  -e MINIO_ROOT_USER=tripmate -e MINIO_ROOT_PASSWORD=changeme-tripmate-minio \
+  alpine/minio:latest-release server /data --console-address ":9001"
+
+cd app/photo-service && npm install
+export PHOTO_BUCKET="tripmate-photos"
+export S3_ENDPOINT="http://localhost:9000"
+export S3_FORCE_PATH_STYLE="true"
+export AWS_ACCESS_KEY_ID="tripmate"
+export AWS_SECRET_ACCESS_KEY="changeme-tripmate-minio"
+npm start   # :3000
+```
 
 ## API quick reference
 
@@ -226,8 +248,13 @@ The photo-service needs `PHOTO_BUCKET` set and AWS credentials in the environmen
 
 ## Teardown
 
-```powershell
+```bash
 kubectl delete -f k8s/ --ignore-not-found
-helm uninstall aws-load-balancer-controller -n kube-system
-cd terraform-infra; terraform destroy   # removes S3 bucket (force_destroy) + IAM
+# Optional: remove the ingress controller / CSI driver if nothing else uses them
+helm uninstall ingress-nginx -n ingress-nginx
+# helm uninstall csi-driver-nfs -n kube-system   # only if no other app uses NFS
 ```
+
+> The `tripmate-nfs` StorageClass uses `reclaimPolicy: Retain`, so the volume directories
+> under `/data/tripmate/` on `172.16.11.78` are kept after `kubectl delete`. Remove them
+> manually on the NFS server if you want to reclaim space.

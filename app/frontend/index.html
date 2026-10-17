@@ -139,7 +139,7 @@
   <!-- ░░ Modal: add expense ░░ -->
   <div class="modal-overlay" id="expense-modal" hidden>
     <div class="modal">
-      <h3>Add an expense</h3>
+      <h3 id="expense-modal-title">Add an expense</h3>
       <form id="expense-form">
         <label>Description
           <input id="exp-desc" placeholder="e.g. Dinner at the beach" required />
@@ -168,7 +168,7 @@
 
         <div class="modal-actions">
           <button type="button" class="ghost" data-close>Cancel</button>
-          <button type="submit" class="primary">Add expense</button>
+          <button type="submit" class="primary" id="expense-submit-btn">Add expense</button>
         </div>
       </form>
     </div>

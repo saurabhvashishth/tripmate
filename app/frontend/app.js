@@ -14,6 +14,7 @@ const CATEGORY_ICON = {
 let trips = [];
 let currentTrip = null;
 let categories = ["general"];
+let editingExpenseId = null; // null = adding; an id = editing that expense
 
 // ---- tiny helpers ----------------------------------------------------------
 const $ = (s) => document.querySelector(s);
@@ -194,6 +195,16 @@ async function loadActivity() {
     .map((it) => (it.type === "payment" ? paymentRow(it, cur) : expenseRow(it, cur)))
     .join("");
 
+  // Keep expense objects around so the edit button can prefill the modal.
+  const expenseById = {};
+  items.forEach((it) => { if (it.type !== "payment") expenseById[it.id] = it; });
+
+  feed.querySelectorAll("[data-edit-exp]").forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      openEditExpense(expenseById[b.dataset.editExp]);
+    };
+  });
   feed.querySelectorAll("[data-del-exp]").forEach((b) => {
     b.onclick = async (e) => {
       e.stopPropagation();
@@ -228,6 +239,7 @@ function expenseRow(e, cur) {
         <b>${escapeHtml(e.paid_by)}</b> paid · ${splitNote}
       </div>
     </div>
+    <span class="feed-edit" data-edit-exp="${e.id}" title="Edit">✏️</span>
     <span class="feed-del" data-del-exp="${e.id}" title="Delete">🗑</span>
   </div>`;
 }
@@ -381,13 +393,50 @@ $("#btn-add-expense").onclick = () => {
     toast("Add at least one person first");
     return;
   }
+  editingExpenseId = null;
   $("#expense-form").reset();
   const members = currentTrip.members.map((m) => m.name);
   $("#exp-payer").innerHTML = members.map((n) => `<option>${escapeHtml(n)}</option>`).join("");
+  // Re-enable fields that editing disables.
+  $("#exp-payer").disabled = false;
+  $("#exp-split-type").disabled = false;
   $("#exp-split-type").value = "equal";
+  $("#expense-modal-title").textContent = "Add an expense";
+  $("#expense-submit-btn").textContent = "Add expense";
   renderSplitEditor();
   openModal("#expense-modal");
 };
+
+// Open the expense modal in edit mode, prefilled. The backend PATCH only
+// supports description, amount, category and notes — so payer and split are
+// shown for context but disabled (changing them would need delete + re-add).
+function openEditExpense(exp) {
+  if (!exp) return;
+  editingExpenseId = exp.id;
+  $("#expense-form").reset();
+
+  const members = currentTrip.members.map((m) => m.name);
+  $("#exp-desc").value = exp.description;
+  $("#exp-amount").value = exp.amount;
+  $("#exp-payer").innerHTML = members.map((n) => `<option>${escapeHtml(n)}</option>`).join("");
+  $("#exp-payer").value = exp.paid_by;
+  $("#exp-payer").disabled = true;
+
+  // Category select is populated by loadCategories(); select the current one.
+  if ($("#exp-category").querySelector(`option[value="${exp.category}"]`)) {
+    $("#exp-category").value = exp.category;
+  }
+
+  $("#exp-split-type").value = exp.split_type || "equal";
+  $("#exp-split-type").disabled = true;
+  renderSplitEditor();
+  // Split editor is read-only in edit mode (split isn't PATCH-able).
+  $("#split-editor").querySelectorAll("input").forEach((i) => (i.disabled = true));
+
+  $("#expense-modal-title").textContent = "Edit expense";
+  $("#expense-submit-btn").textContent = "Save changes";
+  openModal("#expense-modal");
+}
 
 $("#exp-split-type").onchange = renderSplitEditor;
 $("#exp-amount").oninput = () => {
@@ -443,6 +492,26 @@ function updateSplitTotal() {
 
 $("#expense-form").onsubmit = async (e) => {
   e.preventDefault();
+
+  // Edit mode: PATCH only the fields the backend accepts.
+  if (editingExpenseId) {
+    const patch = {
+      description: $("#exp-desc").value.trim(),
+      amount: parseFloat($("#exp-amount").value),
+      category: $("#exp-category").value,
+    };
+    try {
+      await jsend(`${API.expenses}/item/${editingExpenseId}`, "PATCH", patch);
+      closeModal("#expense-modal");
+      editingExpenseId = null;
+      loadActivity(); loadOverall();
+      toast("Expense updated");
+    } catch (err) {
+      toast(String(err.message || err).slice(0, 120));
+    }
+    return;
+  }
+
   const type = $("#exp-split-type").value;
   const members = currentTrip.members.map((m) => m.name);
   const amount = parseFloat($("#exp-amount").value);

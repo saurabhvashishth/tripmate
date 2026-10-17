@@ -1,20 +1,22 @@
+# NGINX Ingress for the in-house cluster. Requires the ingress-nginx
+# controller to be installed (see README). Replace the hostnames below with
+# ones that resolve to your ingress controller (DNS, or /etc/hosts entries).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: tripmate
   namespace: tripmate
   annotations:
-    kubernetes.io/ingress.class: alb
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
-    alb.ingress.kubernetes.io/healthcheck-path: /
+    # Uploads can be up to ~12MB (service caps at 10MB).
+    nginx.ingress.kubernetes.io/proxy-body-size: "12m"
 spec:
+  ingressClassName: nginx
   rules:
-    - http:
+    # nginx in the frontend pod reverse-proxies /api/* to the backend
+    # services, so all app traffic terminates at the frontend Service.
+    - host: tripmate.local
+      http:
         paths:
-          # nginx in the frontend pod reverse-proxies /api/* to the backend
-          # services, so all traffic can terminate at the frontend Service.
           - path: /
             pathType: Prefix
             backend:
@@ -22,3 +24,27 @@ spec:
                 name: frontend
                 port:
                   number: 80
+---
+# Separate host that exposes MinIO's S3 API to the browser. The photo-service
+# signs GET URLs against this hostname (S3_PUBLIC_ENDPOINT) so the browser can
+# fetch photos directly from MinIO.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio-s3
+  namespace: tripmate
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "12m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: minio.tripmate.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9000

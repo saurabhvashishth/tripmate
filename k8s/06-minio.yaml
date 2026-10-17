@@ -1,0 +1,100 @@
+# Self-hosted, S3-compatible object storage for the photo-service.
+# Replaces AWS S3 for the in-house deployment.
+#
+# NOTE: change the credentials below before using anywhere real. They are the
+# MinIO root user/password AND the access/secret keys the photo-service uses.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+  namespace: tripmate
+type: Opaque
+stringData:
+  # MinIO root credentials (server) == access keys used by photo-service.
+  MINIO_ROOT_USER: tripmate
+  MINIO_ROOT_PASSWORD: changeme-tripmate-minio
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: tripmate
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: tripmate-nfs
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: tripmate
+  labels: { app: minio }
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: minio }
+  template:
+    metadata:
+      labels: { app: minio }
+    spec:
+      # The NFS-provisioned subdirectory is created root-owned and not
+      # group-writable. alpine/minio runs as a non-root user, so without this
+      # it fails with "file access denied" creating /data/.minio.sys/tmp.
+      # fsGroup makes kubelet chown the mounted volume to GID 1000 at mount
+      # (the nfs.csi.k8s.io driver ships fsGroupPolicy: File), giving the
+      # MinIO process write access to /data.
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: minio
+          # MinIO stopped publishing community images on quay.io/minio in Oct 2025.
+          # alpine/minio is a community rebuild from source that tracks upstream
+          # releases. `latest-release` = latest tagged MinIO release.
+          image: alpine/minio:latest-release
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef: { name: minio-credentials, key: MINIO_ROOT_USER }
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: minio-credentials, key: MINIO_ROOT_PASSWORD }
+          ports:
+            - { name: s3, containerPort: 9000 }
+            - { name: console, containerPort: 9001 }
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: 9000 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: 9000 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 500m, memory: 1Gi }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: tripmate
+spec:
+  selector: { app: minio }
+  ports:
+    - { name: s3, port: 9000, targetPort: 9000 }
+    - { name: console, port: 9001, targetPort: 9001 }
