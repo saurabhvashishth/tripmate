@@ -27,9 +27,11 @@ spec:
             - name: S3_FORCE_PATH_STYLE
               value: "true"
             # Browser-reachable MinIO endpoint used only to sign GET URLs.
-            # Set this to the MinIO Ingress host you expose (see 20-ingress.yaml).
+            # The ingress controller is a NodePort on :30080, so the browser
+            # reaches minio.tripmate.local on that port (see 20-ingress.yaml).
+            # The signed host must match exactly or the S3 signature breaks.
             - name: S3_PUBLIC_ENDPOINT
-              value: http://minio.tripmate.local
+              value: http://minio.tripmate.local:30080
             - name: AWS_REGION
               value: us-east-1
             - name: PHOTO_BUCKET

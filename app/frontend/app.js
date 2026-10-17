@@ -587,9 +587,29 @@ async function loadPhotos() {
   try {
     const items = await jget(`${API.photos}/${currentTrip.id}`);
     grid.innerHTML = items.length
-      ? items.map((p) => `<a href="${p.url}" target="_blank" rel="noopener">
-          <img src="${p.url}" alt="trip photo" loading="lazy" /></a>`).join("")
+      ? items.map((p) => `<div class="photo-cell">
+          <a href="${p.url}" target="_blank" rel="noopener">
+            <img src="${p.url}" alt="trip photo" loading="lazy" /></a>
+          <button class="photo-del" data-key="${escapeHtml(p.key)}" title="Delete photo">🗑</button>
+        </div>`).join("")
       : `<div class="muted small">No photos yet. Upload your first trip memory!</div>`;
+
+    grid.querySelectorAll(".photo-del").forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm("Delete this photo?")) return;
+        // The object key contains a "/" (tripId/file); keep the slash intact
+        // for the backend's wildcard route, but encode the segments.
+        const key = b.dataset.key;
+        const path = key.split("/").map(encodeURIComponent).join("/");
+        try {
+          await jsend(`${API.photos}/item/${path}`, "DELETE");
+          loadPhotos();
+          toast("Photo deleted");
+        } catch (err) {
+          toast(String(err.message || err).slice(0, 120));
+        }
+      };
+    });
   } catch (_) {
     grid.innerHTML = `<div class="muted small">Photos unavailable.</div>`;
   }
